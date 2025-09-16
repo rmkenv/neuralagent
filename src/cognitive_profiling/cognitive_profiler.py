@@ -1,3 +1,4 @@
+
 import json
 import numpy as np
 import pandas as pd
@@ -408,6 +409,145 @@ class CognitiveProfileGenerator:
         
         return blended_traits
     
+    def _blend_thinking_architectures(self, profiles: List[Dict], weights: List[float]) -> Dict[str, Any]:
+        """Blend thinking architectures from multiple profiles."""
+        
+        # Select dominant architecture as base
+        dominant_profile_index = weights.index(max(weights))
+        base_architecture = profiles[dominant_profile_index].get('thinking_architecture', {})
+        
+        # Create blended architecture
+        blended_architecture = base_architecture.copy()
+        
+        # Add notes about hybrid nature
+        blended_architecture['hybrid_notes'] = f"Primary architecture from profile {dominant_profile_index + 1}, influenced by {len(profiles)} profiles"
+        
+        return blended_architecture
+    
+    def _select_dominant_communication_style(self, profiles: List[Dict], weights: List[float]) -> Dict[str, Any]:
+        """Select dominant communication style for hybrid."""
+        
+        # Find profile with highest weight
+        dominant_profile_index = weights.index(max(weights))
+        dominant_style = profiles[dominant_profile_index].get('communication_style', {})
+        
+        # Add hybrid context
+        hybrid_style = dominant_style.copy()
+        hybrid_style['hybrid_influence'] = f"Dominant style with influences from {len(profiles)} profiles"
+        
+        return hybrid_style
+    
+    def _blend_decision_making_profiles(self, profiles: List[Dict], weights: List[float]) -> Dict[str, Any]:
+        """Blend decision-making profiles from multiple profiles."""
+        
+        # Use weighted selection for categorical traits
+        blended_profile = {}
+        
+        # Collect all decision-making profiles
+        decision_profiles = [p.get('decision_making_profile', {}) for p in profiles]
+        
+        # For each trait, use weighted selection
+        traits = ['decision_speed', 'information_gathering', 'stakeholder_consideration', 
+                 'risk_tolerance', 'consensus_seeking', 'implementation_orientation']
+        
+        for trait in traits:
+            # Get values and weights
+            trait_values = [dp.get(trait, 'medium') for dp in decision_profiles]
+            
+            # Select based on highest weight
+            dominant_index = weights.index(max(weights))
+            blended_profile[trait] = trait_values[dominant_index]
+        
+        return blended_profile
+    
+    def _identify_hybrid_strengths(self, profiles: List[Dict], weights: List[float]) -> List[str]:
+        """Identify strengths of the hybrid profile."""
+        
+        hybrid_strengths = []
+        
+        # Collect all strengths from source profiles
+        all_strengths = []
+        for profile in profiles:
+            profile_strengths = profile.get('strengths', [])
+            all_strengths.extend(profile_strengths)
+        
+        # Find common strengths (appear in multiple profiles)
+        strength_counts = {}
+        for strength in all_strengths:
+            strength_counts[strength] = strength_counts.get(strength, 0) + 1
+        
+        # Add strengths that appear in multiple profiles
+        for strength, count in strength_counts.items():
+            if count > 1:
+                hybrid_strengths.append(f"enhanced_{strength}")
+            else:
+                hybrid_strengths.append(strength)
+        
+        # Add hybrid-specific strengths
+        if len(profiles) > 2:
+            hybrid_strengths.append('cognitive_versatility')
+        
+        hybrid_strengths.append('adaptive_thinking')
+        
+        return list(set(hybrid_strengths))  # Remove duplicates
+    
+    def _identify_potential_conflicts(self, profiles: List[Dict], weights: List[float]) -> List[str]:
+        """Identify potential conflicts in the hybrid profile."""
+        
+        conflicts = []
+        
+        # Check for conflicting thinking styles
+        thinking_styles = [p.get('cognitive_traits', {}).get('primary_thinking_style', 'balanced') for p in profiles]
+        if len(set(thinking_styles)) > 1:
+            conflicts.append('conflicting_thinking_styles')
+        
+        # Check for conflicting decision speeds
+        decision_speeds = [p.get('decision_making_profile', {}).get('decision_speed', 'medium') for p in profiles]
+        if 'quick' in decision_speeds and 'deliberate' in decision_speeds:
+            conflicts.append('decision_speed_tension')
+        
+        # Check for risk tolerance conflicts
+        risk_tolerances = [p.get('decision_making_profile', {}).get('risk_tolerance', 'medium') for p in profiles]
+        if 'high' in risk_tolerances and 'low' in risk_tolerances:
+            conflicts.append('risk_tolerance_conflict')
+        
+        # Check for extreme trait combinations
+        analytical_scores = [p.get('cognitive_traits', {}).get('analytical_tendency', 0.5) for p in profiles]
+        intuitive_scores = [p.get('cognitive_traits', {}).get('intuitive_tendency', 0.5) for p in profiles]
+        
+        if max(analytical_scores) > 0.8 and max(intuitive_scores) > 0.8:
+            conflicts.append('analytical_intuitive_tension')
+        
+        return conflicts
+    
+    def _generate_optimization_suggestions(self, use_case: str, hybrid_traits: Dict) -> List[str]:
+        """Generate optimization suggestions for the hybrid profile."""
+        
+        suggestions = []
+        
+        # Use case specific suggestions
+        if use_case == 'leadership':
+            suggestions.append('Focus on balancing analytical and intuitive decision-making')
+            suggestions.append('Develop stakeholder communication strategies')
+        elif use_case == 'innovation':
+            suggestions.append('Leverage creative thinking while maintaining systematic approach')
+            suggestions.append('Create structured ideation processes')
+        elif use_case == 'problem_solving':
+            suggestions.append('Develop frameworks that combine multiple thinking styles')
+            suggestions.append('Practice switching between analytical and creative modes')
+        
+        # Trait-based suggestions
+        analytical_score = hybrid_traits.get('analytical_tendency', 0.5)
+        creative_score = hybrid_traits.get('creative_tendency', 0.5)
+        
+        if analytical_score > 0.7 and creative_score > 0.7:
+            suggestions.append('Create structured creativity sessions to balance both strengths')
+        
+        if hybrid_traits.get('decision_confidence', 0.5) < 0.4:
+            suggestions.append('Develop confidence-building exercises for decision-making')
+        
+        return suggestions
+    
     # Helper methods
     def _calculate_flexibility_score(self, traits: Dict) -> float:
         """Calculate cognitive flexibility based on trait balance."""
@@ -502,6 +642,47 @@ class CognitiveProfileGenerator:
             base_score -= 0.4
         
         return max(base_score, 0.1)
+    
+    def _convert_risk_assessment_to_tolerance(self, risk_assessment: str) -> str:
+        """Convert risk assessment level to risk tolerance."""
+        mapping = {
+            'high': 'low',      # High risk assessment = low risk tolerance
+            'medium': 'medium',
+            'low': 'high'       # Low risk assessment = high risk tolerance
+        }
+        return mapping.get(risk_assessment, 'medium')
+    
+    def _assess_formality_level(self, user_messages: List[Dict]) -> str:
+        """Assess formality level of communication."""
+        if not user_messages:
+            return 'medium'
+        
+        # Simple heuristic based on message characteristics
+        total_contractions = 0
+        total_words = 0
+        
+        for msg in user_messages:
+            content = msg.get('content', '')
+            words = content.split()
+            total_words += len(words)
+            
+            # Count contractions as indicator of informality
+            contractions = ["don't", "won't", "can't", "isn't", "aren't", "wasn't", "weren't", 
+                          "haven't", "hasn't", "hadn't", "wouldn't", "couldn't", "shouldn't"]
+            for contraction in contractions:
+                total_contractions += content.lower().count(contraction)
+        
+        if total_words == 0:
+            return 'medium'
+        
+        contraction_ratio = total_contractions / total_words
+        
+        if contraction_ratio > 0.05:
+            return 'informal'
+        elif contraction_ratio < 0.01:
+            return 'formal'
+        else:
+            return 'medium'
     
     # Additional helper methods would be implemented here for the full system
     def _infer_attention_pattern(self, personality_data: Dict, problem_solving_data: Dict) -> str:

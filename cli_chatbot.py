@@ -1,8 +1,10 @@
+
 #!/usr/bin/env python3
 """
 Neural Agent CLI Chatbot
 A command-line interface for chatting with AI models using multiple providers.
 Supports OpenAI, Anthropic, DeepSeek, and free APIs.
+Now includes cognitive profiling and hybrid profile functionality.
 """
 
 import argparse
@@ -10,11 +12,22 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import configparser
 from dataclasses import dataclass
 import requests
 import time
+
+# Import cognitive profiling modules
+try:
+    from src.cognitive_assessment.chat_assessment import ChatBasedAssessment
+    from src.cognitive_profiling.cognitive_profiler import CognitiveProfileGenerator
+    from src.cognitive_profiling.profile_manager import ProfileManager
+except ImportError as e:
+    print(f"Warning: Cognitive profiling modules not available: {e}")
+    ChatBasedAssessment = None
+    CognitiveProfileGenerator = None
+    ProfileManager = None
 
 try:
     from dotenv import load_dotenv
@@ -218,12 +231,17 @@ class ConfigManager:
         print(f"Configuration saved to {self.config_path}")
 
 class ChatBot:
-    """Main chatbot class"""
+    """Main chatbot class with cognitive profiling support"""
     
     def __init__(self, config: ChatConfig):
         self.config = config
         self.client = APIClient(config)
         self.conversation_history = []
+        
+        # Initialize cognitive profiling components
+        self.profile_manager = ProfileManager() if ProfileManager else None
+        self.profile_generator = CognitiveProfileGenerator() if CognitiveProfileGenerator else None
+        self.current_assessment = None
         
         # Add system message
         if config.system_prompt:
@@ -277,6 +295,155 @@ class ChatBot:
         with open(filename, 'r') as f:
             self.conversation_history = json.load(f)
         print(f"Conversation loaded from {filename}")
+    
+    def run_cognitive_assessment(self) -> Optional[Dict[str, Any]]:
+        """Run cognitive assessment and generate profile"""
+        if not ChatBasedAssessment:
+            print("❌ Cognitive assessment not available. Missing dependencies.")
+            return None
+        
+        print("\n🧠 Starting Cognitive Assessment")
+        print("=" * 50)
+        
+        assessment = ChatBasedAssessment()
+        
+        # Run personality assessment
+        print("Phase 1: Personality Discovery")
+        personality_profile = assessment.run_personality_assessment()
+        
+        # Run problem-solving assessment
+        print("\nPhase 2: Problem-Solving Analysis")
+        problem_solving_profile = assessment.run_problem_solving_assessment()
+        
+        if not personality_profile or not problem_solving_profile:
+            print("❌ Assessment incomplete")
+            return None
+        
+        # Generate comprehensive profile
+        assessment_data = {
+            'personality': personality_profile,
+            'problem_solving': problem_solving_profile,
+            'conversation_history': self.conversation_history
+        }
+        
+        comprehensive_profile = self.profile_generator.generate_comprehensive_profile(assessment_data)
+        
+        # Save profile
+        if self.profile_manager:
+            self.profile_manager.save_profile(comprehensive_profile, 'individual')
+        
+        print(f"\n✅ Cognitive profile generated: {comprehensive_profile['profile_id']}")
+        return comprehensive_profile
+    
+    def create_hybrid_profile(self, profile_ids: List[str], weights: List[float], use_case: str) -> Optional[Dict[str, Any]]:
+        """Create hybrid profile from existing profiles"""
+        if not self.profile_manager or not self.profile_generator:
+            print("❌ Profile management not available")
+            return None
+        
+        # Load source profiles
+        profiles = []
+        for profile_id in profile_ids:
+            profile = self.profile_manager.load_profile(profile_id)
+            if not profile:
+                print(f"❌ Could not load profile: {profile_id}")
+                return None
+            profiles.append(profile)
+        
+        # Create hybrid profile
+        try:
+            hybrid_profile = self.profile_generator.create_hybrid_profile(profiles, weights, use_case)
+            
+            # Save hybrid profile
+            self.profile_manager.save_profile(hybrid_profile, 'hybrid')
+            
+            print(f"✅ Hybrid profile created: {hybrid_profile['profile_id']}")
+            return hybrid_profile
+            
+        except Exception as e:
+            print(f"❌ Error creating hybrid profile: {e}")
+            return None
+    
+    def list_profiles(self, profile_type: Optional[str] = None):
+        """List available profiles"""
+        if not self.profile_manager:
+            print("❌ Profile management not available")
+            return
+        
+        profiles = self.profile_manager.list_profiles(profile_type)
+        
+        if not profiles:
+            print("No profiles found.")
+            return
+        
+        print(f"\n📋 Available Profiles ({len(profiles)})")
+        print("=" * 50)
+        
+        for profile in profiles:
+            print(f"ID: {profile['profile_id']}")
+            print(f"Type: {profile['profile_type']}")
+            print(f"Created: {profile['creation_timestamp']}")
+            print(f"Signature: {profile['cognitive_signature']}")
+            if profile.get('use_case'):
+                print(f"Use Case: {profile['use_case']}")
+            print("-" * 30)
+    
+    def load_profile_for_chat(self, profile_id: str):
+        """Load a profile and adapt chat behavior"""
+        if not self.profile_manager:
+            print("❌ Profile management not available")
+            return
+        
+        profile = self.profile_manager.load_profile(profile_id)
+        if not profile:
+            return
+        
+        # Adapt system prompt based on profile
+        learning_prefs = profile.get('learning_preferences', {})
+        communication_style = profile.get('communication_style', {})
+        
+        # Create personalized system prompt
+        personalized_prompt = self._create_personalized_prompt(profile)
+        
+        # Update system message
+        self.conversation_history = [msg for msg in self.conversation_history if msg["role"] != "system"]
+        self.conversation_history.insert(0, {
+            "role": "system",
+            "content": personalized_prompt
+        })
+        
+        print(f"✅ Chat adapted for profile: {profile_id}")
+        print(f"Communication style: {communication_style.get('style_category', 'balanced')}")
+        print(f"Learning preference: {learning_prefs.get('content_delivery', 'moderate')}")
+    
+    def _create_personalized_prompt(self, profile: Dict[str, Any]) -> str:
+        """Create personalized system prompt based on cognitive profile"""
+        base_prompt = "You are a helpful AI assistant."
+        
+        learning_prefs = profile.get('learning_preferences', {})
+        communication_style = profile.get('communication_style', {})
+        cognitive_traits = profile.get('cognitive_traits', {})
+        
+        # Adapt based on learning preferences
+        if learning_prefs.get('content_delivery') == 'comprehensive':
+            base_prompt += " Provide detailed, thorough explanations with examples and context."
+        elif learning_prefs.get('content_delivery') == 'concise':
+            base_prompt += " Keep responses concise and to the point."
+        
+        # Adapt based on thinking style
+        primary_style = cognitive_traits.get('primary_thinking_style', 'balanced')
+        if primary_style == 'analytical':
+            base_prompt += " Structure your responses logically with clear reasoning steps."
+        elif primary_style == 'creative':
+            base_prompt += " Feel free to use creative examples and analogies in your explanations."
+        elif primary_style == 'intuitive':
+            base_prompt += " Focus on the big picture and underlying patterns."
+        
+        # Adapt based on interaction style
+        if communication_style.get('interaction_style') == 'collaborative':
+            base_prompt += " Ask clarifying questions and encourage dialogue."
+        
+        return base_prompt
 
 def print_welcome():
     """Print welcome message"""
@@ -284,6 +451,8 @@ def print_welcome():
     print("🧠 Neural Agent CLI Chatbot")
     print("=" * 60)
     print("Type 'help' for commands, 'quit' or 'exit' to leave")
+    if ChatBasedAssessment:
+        print("🔬 Cognitive profiling available! Try 'assess' or 'profile'")
     print("=" * 60)
 
 def print_help():
@@ -298,6 +467,14 @@ Available commands:
   set <key> <value> - Set configuration value
   quit/exit         - Exit the chatbot
 
+Cognitive Profile Commands:
+  assess            - Run cognitive assessment
+  profile           - Alias for assess
+  list-profiles     - List all saved profiles
+  load-profile <id> - Load profile and adapt chat behavior
+  hybrid <ids> <weights> <use_case> - Create hybrid profile
+  profile-stats     - Show profile statistics
+
 Configuration keys:
   provider          - API provider (openai, anthropic, deepseek, openrouter)
   model             - Model name
@@ -310,6 +487,9 @@ Examples:
   set model gpt-4
   set temperature 0.5
   save my_conversation.json
+  assess
+  load-profile PROFILE_20240916_143022
+  hybrid PROFILE_001,PROFILE_002 0.6,0.4 leadership
 """
     print(help_text)
 
@@ -409,6 +589,54 @@ def interactive_mode(config: ChatConfig):
                     print("Usage: set <key> <value>")
                 continue
             
+            # Cognitive profiling commands
+            elif user_input.lower() in ['assess', 'profile']:
+                profile = chatbot.run_cognitive_assessment()
+                if profile:
+                    print(f"\n🎯 Your Cognitive Signature: {profile['cognitive_signature']}")
+                continue
+            
+            elif user_input.lower() == 'list-profiles':
+                chatbot.list_profiles()
+                continue
+            
+            elif user_input.lower().startswith('load-profile '):
+                profile_id = user_input[13:].strip()
+                if profile_id:
+                    chatbot.load_profile_for_chat(profile_id)
+                else:
+                    print("Please specify a profile ID")
+                continue
+            
+            elif user_input.lower().startswith('hybrid '):
+                parts = user_input[7:].strip().split(' ')
+                if len(parts) >= 3:
+                    try:
+                        profile_ids = parts[0].split(',')
+                        weights = [float(w) for w in parts[1].split(',')]
+                        use_case = ' '.join(parts[2:])
+                        
+                        hybrid_profile = chatbot.create_hybrid_profile(profile_ids, weights, use_case)
+                        if hybrid_profile:
+                            print(f"🎯 Hybrid Signature: {hybrid_profile['cognitive_signature']}")
+                    except ValueError:
+                        print("Invalid format. Use: hybrid PROFILE1,PROFILE2 0.6,0.4 use_case")
+                else:
+                    print("Usage: hybrid <profile_ids> <weights> <use_case>")
+                    print("Example: hybrid PROFILE_001,PROFILE_002 0.6,0.4 leadership")
+                continue
+            
+            elif user_input.lower() == 'profile-stats':
+                if chatbot.profile_manager:
+                    stats = chatbot.profile_manager.get_profile_stats()
+                    print("\n📊 Profile Statistics")
+                    print("=" * 30)
+                    for key, value in stats.items():
+                        print(f"{key.replace('_', ' ').title()}: {value}")
+                else:
+                    print("❌ Profile management not available")
+                continue
+            
             # Regular chat message
             print("AI: ", end="", flush=True)
             response = chatbot.chat(user_input)
@@ -433,6 +661,9 @@ Examples:
   %(prog)s --provider anthropic              # Use Anthropic Claude
   %(prog)s --config ~/.my_config.ini         # Use custom config file
   %(prog)s --setup                           # Setup configuration interactively
+  %(prog)s --assess                          # Run cognitive assessment
+  %(prog)s --load-profile PROFILE_001        # Load specific profile
+  %(prog)s --create-hybrid PROF1,PROF2 0.6,0.4 leadership  # Create hybrid
 
 Environment Variables:
   NEURALAGENT_PROVIDER     # Default provider
@@ -462,6 +693,14 @@ Supported Providers:
     parser.add_argument('--config', '-c', help='Config file path')
     parser.add_argument('--setup', action='store_true', help='Setup configuration interactively')
     parser.add_argument('--version', action='version', version='Neural Agent CLI 1.0.0')
+    
+    # Cognitive profiling arguments
+    parser.add_argument('--assess', action='store_true', help='Run cognitive assessment')
+    parser.add_argument('--save-profile', help='Save current profile to file')
+    parser.add_argument('--load-profile', help='Load profile by ID')
+    parser.add_argument('--create-hybrid', nargs=3, metavar=('PROFILES', 'WEIGHTS', 'USE_CASE'),
+                       help='Create hybrid profile: profile_ids weights use_case')
+    parser.add_argument('--list-profiles', action='store_true', help='List all profiles')
     
     args = parser.parse_args()
     
@@ -517,6 +756,33 @@ Supported Providers:
         
         config_manager.save_config(config)
         print("\n✅ Configuration saved!")
+        return
+    
+    # Handle cognitive profiling commands
+    chatbot = ChatBot(config)
+    
+    if args.assess:
+        profile = chatbot.run_cognitive_assessment()
+        if profile and args.save_profile:
+            chatbot.profile_manager.export_profile(profile['profile_id'], args.save_profile)
+        return
+    
+    if args.load_profile:
+        chatbot.load_profile_for_chat(args.load_profile)
+        print("Profile loaded. Starting interactive mode...")
+    
+    if args.create_hybrid:
+        profile_ids = args.create_hybrid[0].split(',')
+        weights = [float(w) for w in args.create_hybrid[1].split(',')]
+        use_case = args.create_hybrid[2]
+        
+        hybrid_profile = chatbot.create_hybrid_profile(profile_ids, weights, use_case)
+        if hybrid_profile and args.save_profile:
+            chatbot.profile_manager.export_profile(hybrid_profile['profile_id'], args.save_profile)
+        return
+    
+    if args.list_profiles:
+        chatbot.list_profiles()
         return
     
     # Start interactive mode
