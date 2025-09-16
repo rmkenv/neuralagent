@@ -1,21 +1,21 @@
-import streamlit as st
-import pandas as pd
-import json
 import time
 from datetime import datetime
-import re
-from textstat import flesch_reading_ease, syllable_count
+import random
 import spacy
 from typing import Dict, List, Any, Optional
+from textstat import flesch_reading_ease
+import pandas as pd
+import json
+import re
 
-# Load spaCy model for linguistic analysis
-@st.cache_resource
+
 def load_nlp_model():
     try:
         return spacy.load("en_core_web_sm")
     except OSError:
-        st.error("Please install spaCy English model: python -m spacy download en_core_web_sm")
+        print("Please install spaCy English model: python -m spacy download en_core_web_sm")
         return None
+
 
 class ChatBasedAssessment:
     def __init__(self):
@@ -23,7 +23,17 @@ class ChatBasedAssessment:
         self.conversation_history = []
         self.behavioral_data = []
         self.session_start = time.time()
-        
+
+        # Personality chat state
+        self.personality_chat_stage = 0
+        self.personality_responses = {}
+        self.personality_chat_history = []
+
+        # Problem-solving chat state
+        self.problem_chat_stage = 0
+        self.problem_responses = {}
+        self.problem_chat_history = []
+
         # Cognitive indicators
         self.analytical_patterns = [
             'first', 'second', 'third', 'next', 'then', 'therefore', 'because',
@@ -31,41 +41,31 @@ class ChatBasedAssessment:
             'evidence', 'data', 'facts', 'research', 'study', 'examine',
             'consider', 'evaluate', 'assess', 'measure', 'compare'
         ]
-        
+
         self.intuitive_patterns = [
             'feel', 'sense', 'instinct', 'gut', 'intuition', 'seems like',
             'appears', 'impression', 'hunch', 'vibe', 'energy', 'flow',
             'natural', 'organic', 'spontaneous', 'instinctively', 'naturally'
         ]
-        
+
         self.creative_patterns = [
             'imagine', 'what if', 'brainstorm', 'creative', 'innovative',
             'outside the box', 'alternative', 'unconventional', 'novel',
             'original', 'unique', 'artistic', 'inspiration', 'envision'
         ]
-        
+
         self.systematic_patterns = [
             'process', 'procedure', 'method', 'approach', 'framework',
             'structure', 'organize', 'plan', 'schedule', 'timeline',
             'phases', 'stages', 'sequence', 'order', 'prioritize'
         ]
 
-    def start_personality_chat(self) -> Optional[Dict[str, Any]]:
-        """Interactive personality assessment through conversation."""
-        st.subheader("🗣️ Personality Discovery Chat")
-        st.markdown("Let's have a natural conversation to understand your personality and thinking style.")
-        
-        if 'personality_chat_stage' not in st.session_state:
-            st.session_state.personality_chat_stage = 0
-            st.session_state.personality_responses = {}
-            st.session_state.personality_chat_history = []
-        
-        # Chat stages for personality assessment
-        chat_stages = [
+        # Personality stages
+        self.chat_stages = [
             {
                 'question': "Hi! Let's start with something I'm curious about. When you have free time, what kind of activities do you naturally gravitate toward? What draws you to spend your time that way?",
                 'follow_ups': [
-                    "That's interesting! What specifically do you enjoy about those activities?", 
+                    "That's interesting! What specifically do you enjoy about those activities?",
                     "How do you usually decide what to do when you have multiple options?"
                 ],
                 'trait_focus': 'openness'
@@ -73,7 +73,7 @@ class ChatBasedAssessment:
             {
                 'question': "Now I'm curious about how you approach work or projects. When you start something new, what's your typical process? Walk me through how you like to tackle things.",
                 'follow_ups': [
-                    "Do you prefer to plan everything out first, or do you like to dive in and figure it out as you go?", 
+                    "Do you prefer to plan everything out first, or do you like to dive in and figure it out as you go?",
                     "How do you handle deadlines and time pressure?"
                 ],
                 'trait_focus': 'conscientiousness'
@@ -81,7 +81,7 @@ class ChatBasedAssessment:
             {
                 'question': "Tell me about a recent situation where you had to work with other people - maybe at work, in a group project, or even planning something with friends. How did that experience go for you?",
                 'follow_ups': [
-                    "Do you usually prefer to take the lead, or do you like collaborating as an equal partner?", 
+                    "Do you usually prefer to take the lead, or do you like collaborating as an equal partner?",
                     "How do you handle it when people have different opinions or approaches?"
                 ],
                 'trait_focus': 'extraversion'
@@ -89,7 +89,7 @@ class ChatBasedAssessment:
             {
                 'question': "When there's conflict or disagreement - whether it's at work, with friends, or even in online discussions - what's your natural response? How do you typically handle those situations?",
                 'follow_ups': [
-                    "How important is it to you that everyone gets along and feels heard?", 
+                    "How important is it to you that everyone gets along and feels heard?",
                     "Do you generally trust people's intentions, or do you tend to be more cautious?"
                 ],
                 'trait_focus': 'agreeableness'
@@ -97,118 +97,15 @@ class ChatBasedAssessment:
             {
                 'question': "Let's talk about stress and pressure. Think of a recent time when you felt overwhelmed or stressed. How did you handle it? What goes through your mind in those moments?",
                 'follow_ups': [
-                    "What strategies do you use to cope when things get tough?", 
+                    "What strategies do you use to cope when things get tough?",
                     "Do you find yourself worrying about things that might go wrong?"
                 ],
                 'trait_focus': 'neuroticism'
             }
         ]
-        
-        current_stage = st.session_state.personality_chat_stage
-        
-        # Display conversation history
-        for i, msg in enumerate(st.session_state.personality_chat_history):
-            with st.chat_message(msg['role']):
-                st.write(msg['content'])
-        
-        if current_stage < len(chat_stages):
-            stage_data = chat_stages[current_stage]
-            
-            # Show current question if not already in history
-            if not st.session_state.personality_chat_history or st.session_state.personality_chat_history[-1]['role'] == 'user':
-                with st.chat_message("assistant"):
-                    st.write(stage_data['question'])
-                
-                st.session_state.personality_chat_history.append({
-                    'role': 'assistant',
-                    'content': stage_data['question'],
-                    'timestamp': time.time(),
-                    'stage': current_stage,
-                    'type': 'main_question'
-                })
-            
-            # User response input
-            user_response = st.chat_input("Your response...")
-            
-            if user_response:
-                # Record response timing and analyze
-                response_start_time = time.time()
-                response_data = self.analyze_response(user_response, stage_data['trait_focus'])
-                
-                # Add user response to history
-                st.session_state.personality_chat_history.append({
-                    'role': 'user',
-                    'content': user_response,
-                    'timestamp': response_start_time,
-                    'stage': current_stage,
-                    'trait_focus': stage_data['trait_focus'],
-                    'analysis': response_data
-                })
-                
-                # Store response for final analysis
-                if stage_data['trait_focus'] not in st.session_state.personality_responses:
-                    st.session_state.personality_responses[stage_data['trait_focus']] = []
-                st.session_state.personality_responses[stage_data['trait_focus']].append(response_data)
-                
-                # Determine if we need a follow-up or should move to next stage
-                user_responses_for_stage = [msg for msg in st.session_state.personality_chat_history 
-                                          if msg.get('stage') == current_stage and msg['role'] == 'user']
-                
-                if len(user_responses_for_stage) == 1:  # First response - ask follow-up
-                    follow_up = self.generate_intelligent_follow_up(user_response, stage_data, response_data)
-                    
-                    st.session_state.personality_chat_history.append({
-                        'role': 'assistant',
-                        'content': follow_up,
-                        'timestamp': time.time(),
-                        'stage': current_stage,
-                        'type': 'follow_up'
-                    })
-                    
-                elif len(user_responses_for_stage) >= 2:  # Move to next stage
-                    # Transition message
-                    transition_msg = "Thanks for sharing that insight! " + (
-                        chat_stages[current_stage + 1]['question'] if current_stage + 1 < len(chat_stages) 
-                        else "That completes our personality chat!"
-                    )
-                    
-                    if current_stage + 1 < len(chat_stages):
-                        st.session_state.personality_chat_history.append({
-                            'role': 'assistant',
-                            'content': transition_msg,
-                            'timestamp': time.time(),
-                            'type': 'transition'
-                        })
-                    
-                    st.session_state.personality_chat_stage += 1
-                
-                st.rerun()
-        
-        else:
-            # Assessment complete
-            st.success("✅ Personality chat complete!")
-            
-            if st.button("📊 Generate My Personality Profile", type="primary"):
-                personality_profile = self.generate_personality_profile()
-                st.session_state.personality_profile = personality_profile
-                
-                # Display results
-                self.display_personality_results(personality_profile)
-                return personality_profile
-        
-        return None
 
-    def start_problem_solving_chat(self) -> Optional[Dict[str, Any]]:
-        """Interactive problem-solving assessment through conversation."""
-        st.subheader("🧩 Problem-Solving Discovery")
-        st.markdown("Let's explore how you approach and solve problems through interactive scenarios.")
-        
-        if 'problem_chat_stage' not in st.session_state:
-            st.session_state.problem_chat_stage = 0
-            st.session_state.problem_responses = {}
-            st.session_state.problem_chat_history = []
-        
-        problem_scenarios = [
+        # Problem-solving scenarios
+        self.problem_scenarios = [
             {
                 'title': 'Project Management Challenge',
                 'scenario': """You're managing a team project that's running behind schedule. The deadline is in two weeks, and you've just discovered that a key team member will be unavailable for the next week due to a family emergency. The project involves both technical development and client coordination. How would you handle this situation?""",
@@ -238,100 +135,80 @@ class ChatBasedAssessment:
                 ]
             }
         ]
-        
-        current_stage = st.session_state.problem_chat_stage
-        
-        if current_stage < len(problem_scenarios):
-            scenario = problem_scenarios[current_stage]
-            
-            # Display conversation for this scenario
-            scenario_messages = [msg for msg in st.session_state.problem_chat_history if msg.get('scenario_index') == current_stage]
-            
-            for msg in scenario_messages:
-                with st.chat_message(msg['role']):
-                    st.write(msg['content'])
-            
-            # Show scenario if first time
-            if not scenario_messages:
-                st.markdown(f"**Scenario {current_stage + 1}: {scenario.get('title', 'Problem-Solving Challenge')}**")
-                st.markdown(scenario['scenario'])
-                
-                with st.chat_message("assistant"):
-                    initial_prompt = "Take your time and walk me through how you'd approach this problem. What's your thinking process?"
-                    st.write(initial_prompt)
-                
-                st.session_state.problem_chat_history.append({
-                    'role': 'assistant',
-                    'content': f"**Scenario:** {scenario['scenario']}\n\n{initial_prompt}",
-                    'timestamp': time.time(),
-                    'scenario_index': current_stage,
-                    'scenario_type': scenario['type']
-                })
-            
-            # User input
-            user_response = st.chat_input(f"How would you approach this problem? (Scenario {current_stage + 1}/3)")
-            
-            if user_response:
-                # Analyze response
-                response_data = self.analyze_problem_solving_response(user_response, scenario['type'])
-                
-                # Add to conversation
-                st.session_state.problem_chat_history.append({
-                    'role': 'user',
-                    'content': user_response,
-                    'timestamp': time.time(),
-                    'scenario_index': current_stage,
-                    'analysis': response_data
-                })
-                
-                # Generate intelligent follow-up
-                user_responses_for_scenario = [msg for msg in st.session_state.problem_chat_history 
-                                             if msg.get('scenario_index') == current_stage and msg['role'] == 'user']
-                
-                if len(user_responses_for_scenario) <= 2:  # Continue conversation
-                    follow_up = self.generate_problem_solving_follow_up(user_response, scenario, response_data, len(user_responses_for_scenario))
-                    
-                    st.session_state.problem_chat_history.append({
-                        'role': 'assistant',
-                        'content': follow_up,
-                        'timestamp': time.time(),
-                        'scenario_index': current_stage
-                    })
-                else:  # Move to next scenario
-                    if current_stage + 1 < len(problem_scenarios):
-                        transition = f"Great insights! Let's move to our final scenario."
-                        st.session_state.problem_chat_history.append({
-                            'role': 'assistant',
-                            'content': transition,
-                            'timestamp': time.time(),
-                            'type': 'transition'
-                        })
-                    
-                    st.session_state.problem_chat_stage += 1
-                
-                # Store for final analysis
-                st.session_state.problem_responses[scenario['type']] = {
-                    'scenario': scenario,
-                    'responses': [msg for msg in st.session_state.problem_chat_history 
-                                if msg.get('scenario_index') == current_stage and msg['role'] == 'user'],
-                    'analysis_summary': response_data
-                }
-                
-                st.rerun()
-        
+
+    # Personality CLI interaction methods
+    def get_next_personality_question(self) -> Optional[str]:
+        if self.personality_chat_stage < len(self.chat_stages):
+            stage_data = self.chat_stages[self.personality_chat_stage]
+            assistant_msgs = [m for m in self.personality_chat_history if m['role'] == 'assistant' and m['stage'] == self.personality_chat_stage]
+            if not assistant_msgs:
+                return stage_data['question']
+            else:
+                user_msgs = [m for m in self.personality_chat_history if m['role'] == 'user' and m['stage'] == self.personality_chat_stage]
+                if len(user_msgs) == 1:
+                    return stage_data['follow_ups'][0]
+                elif len(user_msgs) == 2:
+                    self.personality_chat_stage += 1
+                    return self.get_next_personality_question()
+                else:
+                    return None
         else:
-            # Assessment complete
-            st.success("✅ Problem-solving assessment complete!")
-            
-            if st.button("🧠 Analyze My Problem-Solving Style", type="primary"):
-                problem_solving_profile = self.generate_problem_solving_profile()
-                st.session_state.problem_solving_profile = problem_solving_profile
-                
-                # Display results
-                self.display_problem_solving_results(problem_solving_profile)
-                return problem_solving_profile
-        
-        return None
+            return None
+
+    def submit_personality_response(self, user_response: str):
+        current_stage = self.personality_chat_stage
+        stage_data = self.chat_stages[current_stage]
+        response_time = time.time()
+        response_data = self.analyze_response(user_response, stage_data['trait_focus'])
+
+        self.personality_chat_history.append({
+            'role': 'user',
+            'content': user_response,
+            'timestamp': response_time,
+            'stage': current_stage,
+            'trait_focus': stage_data['trait_focus'],
+            'analysis': response_data
+        })
+
+        if stage_data['trait_focus'] not in self.personality_responses:
+            self.personality_responses[stage_data['trait_focus']] = []
+        self.personality_responses[stage_data['trait_focus']].append(response_data)
+
+    # Problem solving CLI interaction methods
+    def get_next_problem_scenario(self) -> Optional[Dict[str, Any]]:
+        if self.problem_chat_stage < len(self.problem_scenarios):
+            scenario = self.problem_scenarios[self.problem_chat_stage]
+            assistant_msgs = [m for m in self.problem_chat_history if m['role'] == 'assistant' and m.get('scenario_index') == self.problem_chat_stage]
+            if not assistant_msgs:
+                return scenario
+            else:
+                user_msgs = [m for m in self.problem_chat_history if m['role'] == 'user' and m.get('scenario_index') == self.problem_chat_stage]
+                if len(user_msgs) >= 3:
+                    self.problem_chat_stage += 1
+                    return self.get_next_problem_scenario()
+                else:
+                    return None
+        else:
+            return None
+
+    def submit_problem_solving_response(self, user_response: str, scenario_type: str):
+        response_data = self.analyze_problem_solving_response(user_response, scenario_type)
+        self.problem_chat_history.append({
+            'role': 'user',
+            'content': user_response,
+            'timestamp': time.time(),
+            'scenario_index': self.problem_chat_stage,
+            'analysis': response_data
+        })
+
+        if scenario_type not in self.problem_responses:
+            self.problem_responses[scenario_type] = {
+                'scenario': self.problem_scenarios[self.problem_chat_stage],
+                'responses': [],
+                'analysis_summary': None
+            }
+        self.problem_responses[scenario_type]['responses'].append(self.problem_chat_history[-1])
+        self.problem_responses[scenario_type]['analysis_summary'] = response_data
 
     def analyze_response(self, text: str, context: str) -> Dict[str, Any]:
         """Analyze text response for cognitive and personality indicators."""
@@ -531,10 +408,7 @@ class ChatBasedAssessment:
 
     def generate_personality_profile(self) -> Dict[str, Any]:
         """Generate personality profile from chat responses."""
-        if not hasattr(st.session_state, 'personality_responses'):
-            return None
-        
-        responses = st.session_state.personality_responses
+        responses = self.personality_responses
         all_analyses = []
         
         # Collect all analysis data
@@ -593,10 +467,7 @@ class ChatBasedAssessment:
 
     def generate_problem_solving_profile(self) -> Dict[str, Any]:
         """Generate problem-solving profile from scenarios."""
-        if not hasattr(st.session_state, 'problem_responses'):
-            return None
-        
-        responses = st.session_state.problem_responses
+        responses = self.problem_responses
         all_analyses = []
         
         # Collect analysis data from all scenarios
@@ -692,38 +563,115 @@ class ChatBasedAssessment:
 
     def display_personality_results(self, profile: Dict[str, Any]):
         """Display personality assessment results."""
-        st.subheader("🧠 Your Personality Profile")
+        print("\n🧠 Your Personality Profile")
+        print("=" * 50)
         
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.metric("Primary Thinking Style", profile['primary_thinking_style'].title())
-            st.metric("Communication Style", profile['communication_style'].replace('_', ' ').title())
-            st.metric("Certainty Level", f"{profile['certainty_level']:.1%}")
-        
-        with col2:
-            st.metric("Analytical Tendency", f"{profile['analytical_tendency']:.1f}")
-            st.metric("Intuitive Tendency", f"{profile['intuitive_tendency']:.1f}")  
-            st.metric("Creative Tendency", f"{profile['creative_tendency']:.1f}")
+        print(f"Primary Thinking Style: {profile['primary_thinking_style'].title()}")
+        print(f"Communication Style: {profile['communication_style'].replace('_', ' ').title()}")
+        print(f"Certainty Level: {profile['certainty_level']:.1%}")
+        print(f"Analytical Tendency: {profile['analytical_tendency']:.1f}")
+        print(f"Intuitive Tendency: {profile['intuitive_tendency']:.1f}")
+        print(f"Creative Tendency: {profile['creative_tendency']:.1f}")
         
         # Response patterns
         if profile['response_patterns']:
-            st.markdown("**🔍 Identified Patterns:**")
+            print("\n🔍 Identified Patterns:")
             for pattern in profile['response_patterns']:
-                st.write(f"• {pattern.replace('_', ' ').title()}")
+                print(f"• {pattern.replace('_', ' ').title()}")
 
     def display_problem_solving_results(self, profile: Dict[str, Any]):
         """Display problem-solving assessment results."""
-        st.subheader("🧩 Your Problem-Solving Profile")
+        print("\n🧩 Your Problem-Solving Profile")
+        print("=" * 50)
         
-        col1, col2 = st.columns(2)
+        print(f"Problem-Solving Style: {profile['problem_solving_style'].replace('_', ' ').title()}")
+        print(f"Stakeholder Orientation: {profile['stakeholder_orientation'].title()}")
+        print(f"Risk Assessment: {profile['risk_assessment'].title()}")
+        print(f"Collaboration Tendency: {profile['collaboration_tendency'].title()}")
+        print(f"Decision Speed: {profile['decision_making_speed'].title()}")
+        print(f"Complexity Comfort: {profile['complexity_comfort'].title()}")
+
+    def run_personality_assessment(self):
+        """Run the complete personality assessment via CLI."""
+        print("🗣️ Personality Discovery Chat")
+        print("Let's have a natural conversation to understand your personality and thinking style.\n")
         
-        with col1:
-            st.metric("Problem-Solving Style", profile['problem_solving_style'].replace('_', ' ').title())
-            st.metric("Stakeholder Orientation", profile['stakeholder_orientation'].title())
-            st.metric("Risk Assessment", profile['risk_assessment'].title())
+        while self.personality_chat_stage < len(self.chat_stages):
+            question = self.get_next_personality_question()
+            if question:
+                print(f"Assistant: {question}")
+                user_response = input("You: ")
+                self.submit_personality_response(user_response)
+            else:
+                break
         
-        with col2:
-            st.metric("Collaboration Tendency", profile['collaboration_tendency'].title())
-            st.metric("Decision Speed", profile['decision_making_speed'].title())
-            st.metric("Complexity Comfort", profile['complexity_comfort'].title())
+        print("\n✅ Personality chat complete!")
+        personality_profile = self.generate_personality_profile()
+        if personality_profile:
+            self.display_personality_results(personality_profile)
+        return personality_profile
+
+    def run_problem_solving_assessment(self):
+        """Run the complete problem-solving assessment via CLI."""
+        print("\n🧩 Problem-Solving Discovery")
+        print("Let's explore how you approach and solve problems through interactive scenarios.\n")
+        
+        while self.problem_chat_stage < len(self.problem_scenarios):
+            scenario = self.get_next_problem_scenario()
+            if scenario:
+                print(f"\nScenario {self.problem_chat_stage + 1}: {scenario.get('title', 'Problem-Solving Challenge')}")
+                print(f"{scenario['scenario']}")
+                print("\nAssistant: Take your time and walk me through how you'd approach this problem. What's your thinking process?")
+                
+                # Get multiple responses for this scenario
+                response_count = 0
+                while response_count < 3:
+                    user_response = input("You: ")
+                    self.submit_problem_solving_response(user_response, scenario['type'])
+                    response_count += 1
+                    
+                    if response_count < 3:
+                        follow_up = self.generate_problem_solving_follow_up(
+                            user_response, scenario, 
+                            self.problem_chat_history[-1]['analysis'], 
+                            response_count
+                        )
+                        print(f"Assistant: {follow_up}")
+                
+                self.problem_chat_stage += 1
+            else:
+                break
+        
+        print("\n✅ Problem-solving assessment complete!")
+        problem_solving_profile = self.generate_problem_solving_profile()
+        if problem_solving_profile:
+            self.display_problem_solving_results(problem_solving_profile)
+        return problem_solving_profile
+
+
+# Example usage
+if __name__ == "__main__":
+    assessment = ChatBasedAssessment()
+    
+    # Run personality assessment
+    personality_profile = assessment.run_personality_assessment()
+    
+    # Run problem-solving assessment
+    problem_solving_profile = assessment.run_problem_solving_assessment()
+    
+    # Save results to JSON
+    results = {
+        'personality_profile': personality_profile,
+        'problem_solving_profile': problem_solving_profile,
+        'session_data': {
+            'start_time': assessment.session_start,
+            'end_time': time.time(),
+            'personality_chat_history': assessment.personality_chat_history,
+            'problem_chat_history': assessment.problem_chat_history
+        }
+    }
+    
+    with open(f'assessment_results_{int(time.time())}.json', 'w') as f:
+        json.dump(results, f, indent=2)
+    
+    print(f"\n📊 Results saved to assessment_results_{int(time.time())}.json")
